@@ -7,11 +7,14 @@ from youtube_transcript_api.formatters import (
 )
 import os
 import re
+import urllib.parse
+import urllib.request
+import json
 
 
 def download_transcript(youtube_url, output_dir, language="en", output_format="json"):
     """
-    Downloads the transcript of a YouTube video and saves it to a file.
+    Downloads the transcript of a YouTube video and saves it to a file.  Includes the video title in the filename.
 
     Args:
         youtube_url (str): The URL of the YouTube video.
@@ -30,6 +33,18 @@ def download_transcript(youtube_url, output_dir, language="en", output_format="j
         if not video_id:
             print(f"Error: Could not extract video ID from URL: {youtube_url}")
             return None
+
+        # Get video title
+        try:
+            video_title = get_video_title(video_id)
+            if not video_title:
+                print(f"Error: Could not retrieve video title for ID: {video_id}")
+                video_title = video_id  # Fallback to video ID if no title is found.
+        except Exception as e:
+            print(
+                f"Error getting video title: {e}.  Falling back to video ID for filename."
+            )
+            video_title = video_id
 
         # Get transcript
         try:
@@ -69,8 +84,12 @@ def download_transcript(youtube_url, output_dir, language="en", output_format="j
         # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
 
-        # Sanitize filename (remove invalid characters)
-        filename = re.sub(r'[\\/*?:"<>|]', "", video_id) + f".{output_extension}"
+        # Sanitize filename (remove invalid characters) for both Title and ID to guard any illegal chars.
+        sanitized_title = re.sub(r'[\\/*?:"<>|]', "", video_title)
+        sanitized_id = re.sub(r'[\\/*?:"<>|]', "", video_id)  # Sanitize the ID as well.
+
+        # Construct the filename: Title - VideoID
+        filename = f"{sanitized_title} - {sanitized_id}.{output_extension}"
         output_path = os.path.join(output_dir, filename)
 
         # Write transcript to file
@@ -108,6 +127,49 @@ def extract_video_id(url):
     return None
 
 
+def get_video_title(video_id):
+    """
+    Retrieves the title of a YouTube video given its ID.
+
+    Args:
+        video_id (str): The YouTube video ID.
+
+    Returns:
+        str: The video title, or None if it cannot be retrieved.
+    """
+    try:
+        # Use the YouTube Data API (v3) to get the video title.  This is the *correct* way to get the title.
+        # You would need an API key for the YouTube Data API v3
+        # Example of using the API (requires an API Key and enabling Youtube Data API V3 in Google Cloud)
+        # api_key = "YOUR_YOUTUBE_API_KEY"
+        # url = f"https://www.googleapis.com/youtube/v3/videos?id={video_id}&key={api_key}&part=snippet"
+        # response = urllib.request.urlopen(url)
+        # data = json.loads(response.read().decode())
+        # if data['items']:
+        #    return data['items'][0]['snippet']['title']
+
+        # Implementing another, possibly brittle, but no-API-key solution:
+
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "Mozilla/5.0"}
+        )  # Spoof User-Agent
+        response = urllib.request.urlopen(req)
+        html = response.read().decode("utf-8")
+        match = re.search(
+            r"<title>(.*?)</title>", html
+        )  # Use regex for direct title grabbing
+        if match:
+            title = match.group(1).replace(" - YouTube", "")  # Remove YouTube suffix
+            return title.strip()
+        else:
+            return None
+
+    except Exception as e:
+        print(f"Error getting video title : {e}")
+        return None
+
+
 def main():
     """
     Main function to parse command-line arguments and download transcripts.
@@ -131,7 +193,7 @@ def main():
     parser.add_argument(
         "-f",
         "--format",
-        default="text",
+        default="json",
         choices=["json", "text", "srt", "vtt"],
         help="Output format (json, text, srt, vtt). (default: json)",
     )
